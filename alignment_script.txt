@@ -1,0 +1,91 @@
+# Example of a script to demultiplex, trim and align MIME sequences to a reference sequence
+# Script searches for compressed paired end sequencing files in the ../rawdata/ directory (1.fq.gz and 2.fq.gz) 
+# All software needs to be installed to the $HOME/Software directory
+# Novoalign indexes must first be generated using reference sequences and put in the /indexes folder (see Novoalign instructions for how to do this)
+# Barcode lists must be created for novobarcode utility and put in the indexes/novobarcodeindexes1_18.txt file (see Novobarcode instructions) 
+# Demultiplexed files are renamed and processed in parallel using the list of barcodes provided in the indexes/indexlist1_18.txt file
+
+# Illumina pipeline
+mkdir ../results
+mkdir ../results/rs_parser
+mkdir ../rawdata/demultiplexedtemp
+mkdir ../rawdata/demultiplexed
+mkdir ../rawdata/demultiplexed_tg
+mkdir ../samfiles
+
+gunzip ../rawdata/1.fq.gz
+gunzip ../rawdata/2.fq.gz
+
+# Demultiplex data 
+echo "**************"
+echo "Demultiplexing files using novobarcode utility"
+echo "**************"
+$HOME/Software/novocraft/novobarcode -d ../rawdata/demultiplexedtemp -b indexes/novobarcodeindexes1_18.txt -f ../rawdata/1.fq ../rawdata/2.fq -F ILMFQ -l 6 > ../results/demultiplexing_output.txt
+
+count=1
+while read fileindex
+do
+	echo $count.$fileindex
+	mv ../rawdata/demultiplexedtemp/$fileindex/1.fq ../rawdata/demultiplexed/$count.$fileindex.1.fq
+	mv ../rawdata/demultiplexedtemp/$fileindex/2.fq ../rawdata/demultiplexed/$count.$fileindex.2.fq
+	let count=count+1
+done < indexes/indexlist1_18.txt
+ 
+rm -rf ../rawdata/demultiplexedtemp
+
+
+
+echo "**************"
+echo "QC before individual files"
+echo "**************"
+count2=1
+while read fileindex
+do
+	echo $count.$fileindex
+	time $HOME/Software/FastQC/fastqc ../rawdata/demultiplexed/$count2.$fileindex.1.fq ../rawdata/demultiplexed/$count2.$fileindex.2.fq --outdir=../results/qc/before_trim &
+	[[ $((count2%32)) -eq 0 ]] && wait
+	let count2=count2+1
+done < indexes/indexlist1_18.txt
+
+
+
+echo "**************"
+echo "Trimming files with trim galore"
+echo "**************"
+count3=1
+while read fileindex
+do
+	time $HOME/Software/trim_galore/trim_galore -q 30 --phred64 --paired -o ../rawdata/demultiplexed_tg ../rawdata/demultiplexed/$count3.$fileindex.1.fq ../rawdata/demultiplexed/$count3.$fileindex.2.fq &
+	[[ $((count3%32)) -eq 0 ]] && wait
+	let count3=count3+1
+done < indexes/indexlist1_18.txt
+
+
+
+
+echo "**************"
+echo "QC after of trim galore"
+echo "**************"
+count4=1
+while read fileindex
+do
+	echo $count4.$fileindex
+	time $HOME/Software/FastQC/fastqc ../rawdata/demultiplexed_tg/$count4.$fileindex.1_val_1.fq ../rawdata/demultiplexed_tg/$count4.$fileindex.2_val_2.fq --outdir=../results/qc/tg &
+	[[ $((count4%32)) -eq 0 ]] && wait
+	let count4=count4+1
+done < indexes/indexlist1_18.txt
+
+
+echo "**************"
+echo "Aligning tg files using novoalign"
+echo "**************"
+count8=1
+while read fileindex
+do
+        echo $count8.$fileindex
+        $HOME/Software/novocraft/novoalign -d indexes/HIV1_535 -f ../rawdata/demultiplexed_tg/$count8.$fileindex.1_val_1.fq -F STDFQ -o SAM -o SoftClip -r None > ../samfiles/tg$count8.$fileindex.1.sam &
+        $HOME/Software/novocraft/novoalign -d indexes/HIV1_535 -f ../rawdata/demultiplexed_tg/$count8.$fileindex.2_val_2.fq -F STDFQ -o SAM -o SoftClip -r None > ../samfiles/tg$count8.$fileindex.2.sam &
+	[[ $((count8%32)) -eq 0 ]] && wait
+        count8=$((count8+1))
+done < indexes/indexlist1_18.txt
+
